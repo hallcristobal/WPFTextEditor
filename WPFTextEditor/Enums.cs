@@ -36,4 +36,10 @@ namespace WPFTextEditor
         Instantly = 1,
         By_Char_Slow = 2
     }
+
+    public enum Encodings
+    {
+        Latin1 = 0,
+        Shift_JIS = 3
+    }
 }
