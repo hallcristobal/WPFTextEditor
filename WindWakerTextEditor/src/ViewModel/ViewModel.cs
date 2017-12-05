@@ -240,11 +240,11 @@ namespace WindWakerTextEditor
                         if (parsed[1] != "" && src.DisplayItemId != (ItemID)Convert.ToByte(parsed[1]))
                             e.Accepted = false;
                     }
-                    catch (OverflowException ex)
+                    catch (OverflowException)
                     {
                         SearchFilter = string.Format("itemid:{0}", 255);
                     }
-                    catch (FormatException ex)
+                    catch (FormatException)
                     {
                         SearchFilter = string.Format("itemid:{0}", parsed[1].Remove(parsed[1].Length - 1));
                     }
@@ -268,11 +268,11 @@ namespace WindWakerTextEditor
                             e.Accepted = false;
                     }
                     // Something fucked up. Let's catch the exception
-                    catch (OverflowException ex)
+                    catch (OverflowException)
                     {
                         SearchFilter = string.Format("msgid:{0}", (int)(GetHighestID() - 1));
                     }
-                    catch (FormatException ex)
+                    catch (FormatException)
                     {
                         SearchFilter = string.Format("msgid:{0}", parsed[1].Remove(parsed[1].Length - 1));
                     }
@@ -336,7 +336,7 @@ namespace WindWakerTextEditor
                     {
                         VirtualFilesystemFile bmgFile = node as VirtualFilesystemFile;
 
-                        reader = new EndianBinaryReader(bmgFile.File.GetData(), Endian.Big);
+                        reader = new EndianBinaryReader(bmgFile.File.GetData(), Encoding.GetEncoding("iso-8859-1"), Endian.Big);
 
                         LoadedTextFile = new BMG(reader);
 
@@ -569,7 +569,7 @@ namespace WindWakerTextEditor
         private void AddMessage()
         {
             short largestID = GetHighestID();
-            Message newMes = new Message(largestID);
+            Message newMes = new Message(largestID, BmgTextFile.Encoding);
             LoadedTextFile.MessageList.Add(newMes);
 
             SelectedMessage = newMes;

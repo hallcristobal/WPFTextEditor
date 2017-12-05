@@ -34,7 +34,8 @@ namespace WindWakerTextEditor
 
         int m_sectionCount;
 
-        byte m_encoding;
+        public static Encodings Encoding => m_encoding;
+        private static Encodings m_encoding = Encodings.Latin1;
 
         short m_numMessages;
 
@@ -64,7 +65,7 @@ namespace WindWakerTextEditor
 
             m_sectionCount = reader.ReadInt32();
 
-            m_encoding = reader.ReadByte();
+            m_encoding = (Encodings)reader.ReadByte(); // 1 = Latin1 3 = Unicode
 
             reader.Skip(0x17);
 
@@ -74,7 +75,7 @@ namespace WindWakerTextEditor
 
             for (int i = 0; i < m_numMessages; i++)
             {
-                Message mes = new Message(reader);
+                Message mes = new Message(reader, m_encoding);
 
                 if (mes.TextDataOffset != 0)
                     MessageList.Add(mes);
@@ -105,7 +106,7 @@ namespace WindWakerTextEditor
             writer.Write("MESGbmg1".ToCharArray()); // Magic
             writer.Write((int)0); // File size placeholder
             writer.Write((int)2); // Number of sections
-            writer.Write(m_encoding); // Preserve original encoding
+            writer.Write((byte)m_encoding); // Preserve original encoding
             ExtensionMethods.Pad32(writer); // Pad header
         }
 
@@ -156,6 +157,8 @@ namespace WindWakerTextEditor
 
     public class Message : INotifyPropertyChanged
     {
+        #region int TextDataOffset
+
         public int TextDataOffset
         {
             get { return m_textDataOffset; }
@@ -163,13 +166,15 @@ namespace WindWakerTextEditor
 
         private int m_textDataOffset;
 
+        #endregion
+
         #region short MessageID
 
         public short MessageId
         {
             get { return m_messageId; }
-            set 
-            { 
+            set
+            {
                 if (value != m_messageId)
                 {
                     m_messageId = value;
@@ -455,6 +460,25 @@ namespace WindWakerTextEditor
 
         #endregion
 
+        #region Encodings Encoding
+
+        public Encodings Encoding
+        {
+            get { return m_encoding; }
+            set
+            {
+                if (value != m_encoding)
+                {
+                    m_encoding = value;
+
+                    NotifyPropertyChanged("Encoding");
+                }
+            }
+        }
+        private Encodings m_encoding;
+
+        #endregion
+
         #region NotifyPropertyChanged Stuff
 
         public event PropertyChangedEventHandler PropertyChanged;
@@ -469,15 +493,17 @@ namespace WindWakerTextEditor
 
         #endregion
 
-        public Message(short id)
+
+        public Message(short id, Encodings encoding)
         {
             MessageId = id;
             UnknownField3 = 96;
             TextBoxPosition = BoxPositions.Bottom1;
             DisplayItemId = ItemID.No_item;
+            Encoding = encoding;
         }
 
-        public Message(EndianBinaryReader reader)
+        public Message(EndianBinaryReader reader, Encodings encoding)
         {
             m_textDataOffset = reader.ReadInt32();
 
@@ -512,6 +538,8 @@ namespace WindWakerTextEditor
             reader.SkipByte();
 
             m_textData = "";
+
+            m_encoding = encoding;
         }
 
         public void ReadTextData(EndianBinaryReader reader)
@@ -522,7 +550,7 @@ namespace WindWakerTextEditor
 
             while (m_testChar != '\0')
             {
-                if (char.IsLetterOrDigit(m_testChar) || char.IsWhiteSpace(m_testChar) || char.IsPunctuation(m_testChar))
+                if (char.IsLetterOrDigit(m_testChar) || char.IsWhiteSpace(m_testChar) || char.IsPunctuation(m_testChar) || (Encoding == Encodings.Shift_JIS && (byte)m_testChar != 0x1A))
                 {
                     m_charList.Add(m_testChar);
                 }
@@ -545,13 +573,40 @@ namespace WindWakerTextEditor
                             string m_controlCodeSeven = GetSevenByteControlTag(reader);
                             m_charList.AddRange(m_controlCodeSeven.ToCharArray(0, m_controlCodeSeven.Length));
                             break;
+                        default:
+                            /*
+                             * 0x1A - Command
+                             * 0x08 + number of bytes to read - 2 (8 counts one) - Furigana amnt
+                             *  - amnt - 6 = bytes to read
+                             * 0xFF - unknown
+                             * 0x00 - unknown
+                             * 0x02 - unknown
+                             * 0x01 - number of characters to put it over (CHARACTERS not bytes, 1 char = 2 bytes)
+                             */
+                            if (Encoding == Encodings.Shift_JIS && m_controlCodeSizeTest >= 8)
+                            {
+                                var furi = "<furigana:";
+                                var amnt = m_controlCodeSizeTest - 6;
+
+                                reader.Skip(3);
+                                var over_amnt = reader.ReadByte();
+                                furi += Convert.ToString(over_amnt) + ":";
+                                var c_a = reader.ReadChars(amnt);
+
+                                m_charList.AddRange(furi.ToCharArray(0, furi.Length));
+                                m_charList.AddRange(c_a);
+                                m_charList.AddRange(">".ToCharArray());
+                            }
+                            break;
                     }
                 }
 
                 m_testChar = reader.ReadChar();
             }
-
-            m_textData = new string(m_charList.ToArray());
+            if (Encoding == Encodings.Latin1)
+                m_textData = new string(m_charList.ToArray());
+            else
+                m_textData = System.Text.Encoding.GetEncoding("shift_jis").GetString(m_charList.Select(c => (byte)c).ToArray());
         }
 
         public byte[] WriteMessage(EndianBinaryWriter writer)
@@ -580,7 +635,15 @@ namespace WindWakerTextEditor
         {
             byte[] output = new byte[1];
 
-            List<byte> charData = new List<byte>(Encoding.ASCII.GetBytes(m_textData));
+            List<byte> charData = new List<byte>();
+            if(Encoding == Encodings.Latin1)
+            {
+                charData.AddRange(System.Text.Encoding.GetEncoding("iso - 8859 - 1").GetBytes(m_textData));
+            }
+            else
+            {
+                charData.AddRange(System.Text.Encoding.GetEncoding("shift_jis").GetBytes(m_textData));
+            }
 
             for (int i = 0; i < charData.Count; i++)
             {
@@ -615,7 +678,15 @@ namespace WindWakerTextEditor
                 //This figures the brackets into the size
                 tagSize += 1;
 
-                string tempTag = new string(Encoding.ASCII.GetChars(tagBuffer.ToArray()));
+                string tempTag = null;
+                if (Encoding == Encodings.Latin1)
+                {
+                    tempTag = new string(System.Text.Encoding.GetEncoding("iso - 8859 - 1").GetChars(tagBuffer.ToArray()));
+                }
+                else
+                {
+                    tempTag = new string(System.Text.Encoding.GetEncoding("shift_jis").GetChars(tagBuffer.ToArray()));
+                }
 
                 string[] tagArgs = tempTag.Split(':');
 
@@ -994,7 +1065,7 @@ namespace WindWakerTextEditor
                             code.Add(0xFF);
                             code.Add(0x00);
                             code.Add(0x00);
-                            code.Add(Convert.ToByte(tagArgs[1]));
+                            code.AddRange(BitConverter.GetBytes(Convert.ToInt16(tagArgs[1])));
                         }
 
                         else
@@ -1131,6 +1202,25 @@ namespace WindWakerTextEditor
                         }
                         break;
                     #endregion
+
+                    case "furigana":
+                        if(tagArgs.Length > 1)
+                        {
+                            var over_amnt = byte.Parse(tagArgs[1]);
+                            var furigana = System.Text.Encoding.GetEncoding("shift_jis").GetBytes(tagArgs[2]);
+                            var size_code = furigana.Length + 6;
+                            code.Add(0x1A);
+                            code.Add((byte)size_code);
+                            code.Add(0xFF);
+                            code.Add(0x00);
+                            code.Add(0x02);
+                            code.AddRange(furigana);
+                        }
+                        else
+                        {
+
+                        }
+                        break;
                 }
 
                 charData.InsertRange((int)(i + tagSize), code.ToArray());
@@ -1272,17 +1362,17 @@ namespace WindWakerTextEditor
         public static string GetDescription(this Enum value)
         {
             Type type = value.GetType();
-            
+
             string name = Enum.GetName(type, value);
-            
+
             if (name != null)
             {
                 var field = type.GetField(name);
-                
+
                 if (field != null)
                 {
-                    DescriptionAttribute attr = 
-                       Attribute.GetCustomAttribute(field, 
+                    DescriptionAttribute attr =
+                       Attribute.GetCustomAttribute(field,
                          typeof(DescriptionAttribute)) as DescriptionAttribute;
                     if (attr != null)
                     {
